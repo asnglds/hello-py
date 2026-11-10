@@ -95,6 +95,16 @@ def plan(folder: Path) -> list[tuple[Path, Path]]:
     return result
 
 
+def execute(src: Path, dst: Path) -> None:
+    """把单个文件搬到目标位置。失败时抛出 OSError，交给调用方处理。
+
+    单独抽成函数，是为了让 try/except 的范围尽可能小——
+    只包住"可能失败的那两行"，不要包住整个循环。
+    """
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    shutil.move(src, dst)
+
+
 def main() -> None:
     args = parse_args()
     folder = Path(args.folder)
@@ -104,16 +114,43 @@ def main() -> None:
         print(f"目录不存在：{folder}")
         return
 
-    for src, dst in plan(folder):
+    moves = plan(folder)
+    if not moves:
+        print("没有需要整理的文件。")
+        return
+
+    ok = 0
+    failed: list[tuple[str, str]] = []
+
+    for src, dst in moves:
         # 试运行：只打印，continue 直接跳到下一个文件
         if args.dry_run:
             print(f"[试运行] {src.name:<20} -> {dst.relative_to(folder)}")
             continue
 
-        # 目标子目录可能还不存在，先建出来（已存在就当没发生）
-        dst.parent.mkdir(parents=True, exist_ok=True)
-        shutil.move(src, dst)
+        # 只捕获 OSError：文件被占用、没权限、目标不可写都属于它。
+        # 不写裸 except:，因为那样会把 KeyboardInterrupt 和拼写错误也一起吞掉，
+        # 出了 bug 反而更难查。
+        try:
+            execute(src, dst)
+        except OSError as exc:
+            failed.append((src.name, str(exc)))
+            print(f"[失败]   {src.name:<20} {exc}")
+            continue  # 这一个失败不影响后面的文件
+
+        ok += 1
         print(f"{src.name:<20} -> {dst.relative_to(folder)}")
+
+    # 最后统一汇报，而不是散落在各处
+    print()
+    if args.dry_run:
+        print(f"试运行：共 {len(moves)} 个文件待整理，未做任何改动。")
+    elif failed:
+        print(f"完成：成功 {ok} 个，失败 {len(failed)} 个")
+        for name, reason in failed:
+            print(f"  - {name}：{reason}")
+    else:
+        print(f"完成：成功 {ok} 个，全部处理完毕。")
 
 
 if __name__ == "__main__":
