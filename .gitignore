@@ -1,0 +1,23 @@
+# Python 字节码
+__pycache__/
+*.py[cod]
+
+# 虚拟环境：本地可重建，不要提交
+.venv/
+
+# 构建产物
+build/
+dist/
+*.egg-info/
+
+# 本地运行产生的数据
+output.csv
+*.log
+
+# 编辑器与系统文件
+.idea/
+.DS_Store
+Thumbs.db
+
+# 注意：uv.lock 必须提交，不要加到这里
+# 它记录了精确版本，是环境可复现的关键
