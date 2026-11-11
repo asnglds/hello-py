@@ -6,6 +6,7 @@
 """
 
 import argparse
+import os
 import shutil
 from pathlib import Path
 
@@ -51,18 +52,19 @@ def pick_destination(folder: Path, target_dir: str, name: str, taken: set[str]) 
     比如 photo1.jpg 和 photo1.JPG 都映射到 images/，
     而 Windows 文件名不区分大小写，它们其实是同一个路径。
     """
-    stem = Path(name).stem      # 主名，如 photo1
+    stem = Path(name).stem  # 主名，如 photo1
     suffix = Path(name).suffix  # 扩展名，如 .JPG
 
     dst = folder / target_dir / name
     n = 1
-    # 用「小写后的路径字符串」当 key，因为 Windows 文件名不区分大小写，
-    # Path 对象直接比较是区分大小写的，会漏掉 Photo.jpg 和 photo.jpg 这种冲突
-    while dst.exists() or dst.as_posix().lower() in taken:
+    # normcase 跟着操作系统走：Windows 转小写，Linux 原样返回。
+    # 比手写 .lower() 更准确——Linux 上 A.jpg 和 a.jpg 是两个真文件，
+    # 硬转小写会把它们误判成冲突。
+    while dst.exists() or os.path.normcase(dst) in taken:
         dst = folder / target_dir / f"{stem}_{n}{suffix}"
         n += 1
 
-    taken.add(dst.as_posix().lower())
+    taken.add(os.path.normcase(dst))
     return dst
 
 
@@ -76,17 +78,17 @@ def plan(folder: Path) -> list[tuple[Path, Path]]:
     result: list[tuple[Path, Path]] = []
     taken: set[str] = set()
 
-    for item in folder.iterdir():
-        # 跳过子目录，否则 images/ 这种也会被当成文件处理
-        if not item.is_file():
-            continue
+    # 推导式只负责「筛」，不负责「做」。
+    # is_file() 和 startswith() 都只是读取判断，没有副作用，所以放进来是安全的。
+    # 要排除两类：
+    #   1. 子目录 —— 否则 images/ 这种也会被当成文件处理
+    #   2. 隐藏文件 —— .gitignore、.gitattributes、.python-version 是配置，动了会出事
+    files = [
+        p for p in folder.iterdir() if p.is_file() and not p.name.startswith(".")
+    ]
 
-        # 跳过隐藏文件：.gitignore、.gitattributes、.python-version 这类
-        # 是配置而不是待归档的内容，动了会出事
-        if item.name.startswith("."):
-            continue
-
-        ext = item.suffix.lower()               # .JPG 和 .jpg 视为同一种
+    for item in files:
+        ext = item.suffix.lower()  # .JPG 和 .jpg 视为同一种
         target_dir = FOLDERS.get(ext, "others")  # 查不到就用 others
         dst = pick_destination(folder, target_dir, item.name, taken)
 
