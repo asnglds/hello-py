@@ -8,6 +8,7 @@
 import argparse
 import os
 import shutil
+from dataclasses import dataclass
 from pathlib import Path
 
 # 扩展名 -> 目标子目录。
@@ -29,6 +30,21 @@ FOLDERS = {
     ".rar": "archives",
     ".7z": "archives",
 }
+
+
+@dataclass(frozen=True)
+class Move:
+    """一次搬移：从哪到哪。
+
+    用 dataclass 而不是 tuple，唯一理由就是：字段有名字。
+    tuple 写成 (src, dst) 时，三个月后看到 moves[3][1] 得靠记忆判断它是谁；
+    move.dst 一眼就明白，拼错了 Pylance 还会立刻报红。
+
+    frozen=True 让它不可变，顺带获得可哈希能力（能进 set、能当字典键）。
+    """
+
+    src: Path
+    dst: Path
 
 
 def parse_args() -> argparse.Namespace:
@@ -68,14 +84,14 @@ def pick_destination(folder: Path, target_dir: str, name: str, taken: set[str]) 
     return dst
 
 
-def plan(folder: Path) -> list[tuple[Path, Path]]:
+def plan(folder: Path) -> list[Move]:
     """先算出"每个文件该搬到哪"，只计算，不动手。
 
     把"想"和"做"分开有两个好处：
     1. 可以先打印给人看，再决定要不要真做（--dry-run）
     2. 遍历期间不创建目录、不移动文件，避免边遍历边改目录结构
     """
-    result: list[tuple[Path, Path]] = []
+    result: list[Move] = []
     taken: set[str] = set()
 
     # 推导式只负责「筛」，不负责「做」。
@@ -92,7 +108,7 @@ def plan(folder: Path) -> list[tuple[Path, Path]]:
         target_dir = FOLDERS.get(ext, "others")  # 查不到就用 others
         dst = pick_destination(folder, target_dir, item.name, taken)
 
-        result.append((item, dst))
+        result.append(Move(item, dst))
 
     return result
 
@@ -124,24 +140,24 @@ def main() -> None:
     ok = 0
     failed: list[tuple[str, str]] = []
 
-    for src, dst in moves:
+    for move in moves:
         # 试运行：只打印，continue 直接跳到下一个文件
         if args.dry_run:
-            print(f"[试运行] {src.name:<20} -> {dst.relative_to(folder)}")
+            print(f"[试运行] {move.src.name:<20} -> {move.dst.relative_to(folder)}")
             continue
 
         # 只捕获 OSError：文件被占用、没权限、目标不可写都属于它。
         # 不写裸 except:，因为那样会把 KeyboardInterrupt 和拼写错误也一起吞掉，
         # 出了 bug 反而更难查。
         try:
-            execute(src, dst)
+            execute(move.src, move.dst)
         except OSError as exc:
-            failed.append((src.name, str(exc)))
-            print(f"[失败]   {src.name:<20} {exc}")
+            failed.append((move.src.name, str(exc)))
+            print(f"[失败]   {move.src.name:<20} {exc}")
             continue  # 这一个失败不影响后面的文件
 
         ok += 1
-        print(f"{src.name:<20} -> {dst.relative_to(folder)}")
+        print(f"{move.src.name:<20} -> {move.dst.relative_to(folder)}")
 
     # 最后统一汇报，而不是散落在各处
     print()
