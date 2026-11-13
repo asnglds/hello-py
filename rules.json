@@ -1,0 +1,19 @@
+{
+  ".jpg": "images",
+  ".jpeg": "images",
+  ".png": "images",
+  ".gif": "images",
+  ".webp": "images",
+  ".pdf": "docs",
+  ".txt": "docs",
+  ".md": "docs",
+  ".csv": "docs",
+  ".docx": "docs",
+  ".xlsx": "docs",
+  ".mp4": "videos",
+  ".mov": "videos",
+  ".avi": "videos",
+  ".zip": "archives",
+  ".rar": "archives",
+  ".7z": "archives"
+}

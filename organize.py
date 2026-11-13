@@ -6,30 +6,15 @@
 """
 
 import argparse
+import json
 import os
 import shutil
+from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
 
-# 扩展名 -> 目标子目录。
-# 注意：左边必须是一个完整的扩展名字符串（带点），不能写成 ".md .csv"。
-# 多个键可以指向同一个值，这才是"多对一"的正确表达。
-FOLDERS = {
-    ".jpg": "images",
-    ".jpeg": "images",
-    ".png": "images",
-    ".gif": "images",
-    ".pdf": "docs",
-    ".txt": "docs",
-    ".md": "docs",
-    ".csv": "docs",
-    ".mp4": "videos",
-    ".mov": "videos",
-    ".avi": "videos",
-    ".zip": "archives",
-    ".rar": "archives",
-    ".7z": "archives",
-}
+# 扩展名 -> 目标子目录的规则，已经搬到 rules.json（跟本文件同目录）。
+# 想加新扩展名就改那个 JSON，不需要动代码；想用另一套规则就传 --rules 指定别的文件。
 
 
 @dataclass(frozen=True)
@@ -47,6 +32,53 @@ class Move:
     dst: Path
 
 
+class RuleSet:
+    """扩展名 -> 目标目录 的映射表，从 JSON 文件加载。
+
+    为什么用普通类而不是 dataclass：
+    dataclass 适合「纯数据」，字段是什么、存什么，一眼看完。
+    这个类有行为（加载、查表、算属性），而且要在 __init__ 里把键统一转小写，
+    用普通类写反而更直接。
+    """
+
+    def __init__(self, mapping: dict[str, str]) -> None:
+        # 键统一转小写，这样 .JPG 和 .jpg 都能查到。
+        # 「统一在入口处归一化」——和 main() 里 str 转 Path 是同一个思路。
+        self._mapping = {k.lower(): v for k, v in mapping.items()}
+
+    @classmethod
+    def from_json(cls, path: Path) -> "RuleSet":
+        """从 JSON 文件读规则。
+
+        为什么不写在 __init__ 里：__init__ 应该只收「已经解析好的数据」。
+        读文件可能失败（不存在、格式错），把它放在独立的构造入口里，
+        调用方就能明确知道「这一步可能抛异常」，而不是每次造对象都提心吊胆。
+        """
+        raw = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(raw, dict):
+            raise ValueError(f"规则文件应该是一个 JSON 对象，实际是 {type(raw).__name__}：{path}")
+        for ext, folder in raw.items():
+            if not ext.startswith("."):
+                raise ValueError(f"扩展名必须以点开头：{ext!r}（在 {path}）")
+            if not isinstance(folder, str):
+                raise ValueError(f"目录名必须是字符串：{ext} -> {folder!r}")
+        return cls(raw)
+
+    @property
+    def extensions(self) -> tuple[str, ...]:
+        """所有支持的扩展名，排序后返回。每次读都现算，所以和 _mapping 永远一致。"""
+        return tuple(sorted(self._mapping))
+
+    @property
+    def folders(self) -> tuple[str, ...]:
+        """所有目标目录名，去重且排序。"""
+        return tuple(sorted(set(self._mapping.values())))
+
+    def folder_for(self, path: Path) -> str:
+        """给一个文件，返回它该去的子目录名；不认识的扩展名归到 others。"""
+        return self._mapping.get(path.suffix.lower(), "others")
+
+
 def parse_args() -> argparse.Namespace:
     """解析命令行参数。
 
@@ -57,6 +89,10 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="按扩展名归档文件")
     parser.add_argument("folder", help="要整理的目录（必填）")
     parser.add_argument("--dry-run", action="store_true", help="只打印计划，不移动文件")
+    parser.add_argument(
+        "--rules",
+        help="规则文件路径（默认使用脚本同目录的 rules.json）",
+    )
     return parser.parse_args()
 
 
@@ -84,33 +120,32 @@ def pick_destination(folder: Path, target_dir: str, name: str, taken: set[str]) 
     return dst
 
 
-def plan(folder: Path) -> list[Move]:
-    """先算出"每个文件该搬到哪"，只计算，不动手。
+def plan(folder: Path, rules: RuleSet) -> Iterator[Move]:
+    """逐个算出"每个文件该搬到哪"，只计算，不动手。
 
-    把"想"和"做"分开有两个好处：
-    1. 可以先打印给人看，再决定要不要真做（--dry-run）
-    2. 遍历期间不创建目录、不移动文件，避免边遍历边改目录结构
+    返回的是生成器：要一个算一个，算完就交出去，不在内存里堆一整份计划。
+    十万个文件时，「堆不堆」决定了内存占用是几十兆还是几百字节。
+
+    代价有两个，调用方必须知道：
+    1. 只能遍历一次，遍历完就空了
+    2. 没有 len()，想统计得自己数
+
+    rules 从参数传进来，不用模块级常量——这样 plan() 不依赖任何全局状态，
+    测试时塞一个假的规则表就能跑，不用改磁盘上的文件。
     """
-    result: list[Move] = []
     taken: set[str] = set()
 
-    # 推导式只负责「筛」，不负责「做」。
-    # is_file() 和 startswith() 都只是读取判断，没有副作用，所以放进来是安全的。
-    # 要排除两类：
-    #   1. 子目录 —— 否则 images/ 这种也会被当成文件处理
-    #   2. 隐藏文件 —— .gitignore、.gitattributes、.python-version 是配置，动了会出事
+    # 这里仍然先做成列表，故意的。
+    # 如果偷懒写成生成器，iterdir() 就会「边遍历边被移动影响」——
+    # main() 在拿到第一个 Move 后就开始搬文件、创建 images/ 这类子目录，
+    # 而 iterdir() 还没扫完。先快照一份，后面怎么搬都不影响这一轮遍历。
     files = [
         p for p in folder.iterdir() if p.is_file() and not p.name.startswith(".")
     ]
 
     for item in files:
-        ext = item.suffix.lower()  # .JPG 和 .jpg 视为同一种
-        target_dir = FOLDERS.get(ext, "others")  # 查不到就用 others
-        dst = pick_destination(folder, target_dir, item.name, taken)
-
-        result.append(Move(item, dst))
-
-    return result
+        dst = pick_destination(folder, rules.folder_for(item), item.name, taken)
+        yield Move(item, dst)
 
 
 def execute(src: Path, dst: Path) -> None:
@@ -132,15 +167,29 @@ def main() -> None:
         print(f"目录不存在：{folder}")
         return
 
-    moves = plan(folder)
-    if not moves:
-        print("没有需要整理的文件。")
+    # --rules 不给就用脚本旁边的 rules.json。
+    # Path(__file__) 是「本文件的完整路径」，.with_name() 换成同目录下的另一个文件名，
+    # 这样无论你在哪个目录下运行，都能找到配置文件。
+    rules_path = Path(args.rules) if args.rules else Path(__file__).with_name("rules.json")
+    if not rules_path.is_file():
+        print(f"找不到规则文件：{rules_path}")
         return
 
+    try:
+        rules = RuleSet.from_json(rules_path)
+    except (OSError, ValueError) as exc:
+        # json.JSONDecodeError 是 ValueError 的子类，所以格式错也在这里被接住
+        print(f"规则文件读不了：{exc}")
+        return
+
+    # plan() 现在返回生成器，不能再 len() 或者先判断非空——那样会把它抽干。
+    # 所以改成边遍历边计数，遍历完再判断「一个都没收到」。
     ok = 0
+    total = 0
     failed: list[tuple[str, str]] = []
 
-    for move in moves:
+    for move in plan(folder, rules):
+        total += 1
         # 试运行：只打印，continue 直接跳到下一个文件
         if args.dry_run:
             print(f"[试运行] {move.src.name:<20} -> {move.dst.relative_to(folder)}")
@@ -159,10 +208,14 @@ def main() -> None:
         ok += 1
         print(f"{move.src.name:<20} -> {move.dst.relative_to(folder)}")
 
+    if total == 0:
+        print("没有需要整理的文件。")
+        return
+
     # 最后统一汇报，而不是散落在各处
     print()
     if args.dry_run:
-        print(f"试运行：共 {len(moves)} 个文件待整理，未做任何改动。")
+        print(f"试运行：共 {total} 个文件待整理，未做任何改动。")
     elif failed:
         print(f"完成：成功 {ok} 个，失败 {len(failed)} 个")
         for name, reason in failed:
