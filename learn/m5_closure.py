@@ -12,14 +12,14 @@ print("=" * 58)
 
 
 def make_counter(start: int = 0):
-    n = start           # 外层局部变量
+    n = start  # 外层局部变量
 
-    def inc():          # 内层函数
-        nonlocal n      # 「我要改的是外层那个 n，不是我自己的」
+    def inc():  # 内层函数
+        nonlocal n  # 「我要改的是外层那个 n，不是我自己的」
         n += 1
         return n
 
-    return inc          # 返回的是函数本身，不是调用结果
+    return inc  # 返回的是函数本身，不是调用结果
 
 
 c1 = make_counter()
@@ -46,12 +46,14 @@ print("=" * 58)
 
 
 def shout(func):
-    print(f"    [装饰器执行了，时间是「def 的那一刻」，不是调用时] 收到 {func.__name__}")
+    print(
+        f"    [装饰器执行了，时间是「def 的那一刻」，不是调用时] 收到 {func.__name__}"
+    )
 
     def wrapper():
         return func().upper() + "!!!"
 
-    return wrapper          # 注意：返回函数本体，没有括号
+    return wrapper  # 注意：返回函数本体，没有括号
 
 
 @shout
@@ -78,7 +80,7 @@ print("=" * 58)
 
 
 def broken(func):
-    def wrapper():              # 只收 0 个参数
+    def wrapper():  # 只收 0 个参数
         return func()
 
     return wrapper

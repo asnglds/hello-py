@@ -6,10 +6,12 @@
 """
 
 import argparse
+import functools
 import json
 import os
 import shutil
-from collections.abc import Iterator
+import time
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -148,6 +150,34 @@ def plan(folder: Path, rules: RuleSet) -> Iterator[Move]:
         yield Move(item, dst)
 
 
+def retry(times: int = 3, delay: float = 0.2):
+    """失败自动重试的装饰器（带参数版，三层结构）。
+
+    只重试 PermissionError —— 也就是「文件正被别的程序占用」这类
+    「过一会儿可能就好了」的错误。
+
+    为什么不重试所有 OSError：
+    「目标是个目录」「路径不存在」这类错误，重试一百次结果一样，
+    白白让每次失败多等 0.4 秒。重试只对「可能自愈」的故障有意义。
+    """
+
+    def decorator(func: Callable[..., None]) -> Callable[..., None]:
+        @functools.wraps(func)  # 不加这个，func.__name__ 会变成 "wrapper"
+        def wrapper(*args: object, **kwargs: object) -> None:
+            for attempt in range(1, times + 1):
+                try:
+                    return func(*args, **kwargs)
+                except PermissionError:
+                    if attempt == times:
+                        raise  # 最后一次还失败，就让它冒出去，交给上层记录
+                    time.sleep(delay)
+
+        return wrapper
+
+    return decorator
+
+
+@retry(times=3, delay=0.2)
 def execute(src: Path, dst: Path) -> None:
     """把单个文件搬到目标位置。失败时抛出 OSError，交给调用方处理。
 
