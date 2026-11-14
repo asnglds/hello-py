@@ -15,9 +15,53 @@ orgtool = "orgtool.cli:main"
 # 放在这里的好处是「装工具」和「改工具」的依赖彻底分开。
 [dependency-groups]
 dev = [
+    "pre-commit>=4.7.0",
+    "pyright>=1.1.414",
     "requests>=2.34.2",
+    "ruff>=0.17.5",
 ]
 
 [build-system]
 requires = ["uv_build>=0.13.7,<0.14.0"]
 build-backend = "uv_build"
+
+[tool.pyright]
+# basic → standard → strict 三档。
+# 为什么要从 standard 起步：strict 一上来会报几百条，多半跟你的代码无关，
+# 而是它要求每个参数、每个返回值都有精确注解。先 standard 跑通，
+# 再对单个文件加 `# pyright: strict` 逐步收紧。
+typeCheckingMode = "standard"
+include = ["src"]
+# learn/ 是学习期的演示代码，examples/ 是一次性示例，
+# 都不属于「要维护的产品代码」，先排除掉，避免噪音淹没真问题。
+exclude = ["learn", "examples", ".venv"]
+
+[tool.ruff]
+# 默认 88 列对英文够用，对中文偏紧——一句错误提示就超了。
+# 中文信息密度高，看起来长但并不难读，100 是个折中。
+line-length = 100
+target-version = "py314"
+# 注意：ruff 的 exclude 和 pyright 的 exclude 是两套配置，必须各写一遍。
+# 只设一边的结果是「类型检查跳过了，格式化却没跳过」——第一次跑 pre-commit
+# 才发现 learn/ 下六个演示脚本被重排，产生一堆和本次改动无关的 diff。
+exclude = ["learn"]
+# 这一行是给 pre-commit 用的：pre-commit 会把「本次提交涉及的文件」
+# 直接作为参数传给 ruff，而 ruff 默认不排除「显式传进来的文件」。
+# 没有 force-exclude，上面的 exclude 在手动跑时生效、在 git 钩子里失效
+# ——这类「同一个配置在不同入口行为不同」的坑，是工具链最烦人的部分。
+force-exclude = true
+
+[tool.ruff.lint]
+# 这几组是社区公认的「有用且不啰嗦」：
+#   E/W  pycodestyle 错误      F   pyflakes（未使用变量、未定义名）
+#   I    import 排序            UP  pyupgrade（用新语法替旧写法）
+#   B    bugbear（容易写错的陷阱）  SIM 可简化代码   RUF ruff 自研规则
+select = ["E", "F", "I", "UP", "B", "SIM", "RUF"]
+ignore = [
+    # RUF001/002/003 检查「歧义字符」——原本是防止西里尔字母 а 冒充英文 a。
+    # 但中文标点（：（）；，）全都会被它标出来，对中文项目是纯噪音。
+    # 这类规则要么整组关掉，要么就得写几百条 noqa —— 当然是关掉。
+    "RUF001",
+    "RUF002",
+    "RUF003",
+]

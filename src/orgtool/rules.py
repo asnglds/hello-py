@@ -33,7 +33,7 @@ class RuleSet:
         self._mapping = {k.lower(): v for k, v in mapping.items()}
 
     @classmethod
-    def from_json(cls, path: Path) -> "RuleSet":
+    def from_json(cls, path: Path) -> RuleSet:
         """从 JSON 文件读规则。
 
         为什么不写在 __init__ 里：__init__ 应该只收「已经解析好的数据」。

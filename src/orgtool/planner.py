@@ -59,9 +59,7 @@ def plan(folder: Path, rules: RuleSet) -> Iterator[Move]:
     # 如果偷懒写成生成器，iterdir() 就会「边遍历边被移动影响」——
     # 调用方在拿到第一个 Move 后就开始搬文件、创建 images/ 这类子目录，
     # 而 iterdir() 还没扫完。先快照一份，后面怎么搬都不影响这一轮遍历。
-    files = [
-        p for p in folder.iterdir() if p.is_file() and not p.name.startswith(".")
-    ]
+    files = [p for p in folder.iterdir() if p.is_file() and not p.name.startswith(".")]
 
     for item in files:
         dst = pick_destination(folder, rules.folder_for(item), item.name, taken)

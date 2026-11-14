@@ -1,0 +1,50 @@
+# 提交前自动跑的检查。
+#
+# 为什么用 local hook 而不是官方的 ruff-pre-commit：
+# 官方仓库的做法是把 ruff 的版本写在 rev 里，每次要在独立环境里装一遍，
+# 而且要先能连上 GitHub。local hook 直接调 `uv run ruff`——
+# 用的是 uv.lock 里锁定的那个版本，不联网、不装第二份、版本不会漂移。
+#
+# 代价：要求 uv 在 PATH 上。换机器时先跑一次 `uv sync` 就行。
+
+repos:
+  - repo: local
+    hooks:
+      # 1) lint + 自动修能自动修的
+      - id: ruff-check
+        name: ruff check
+        entry: uv run ruff check --fix --exit-non-zero-on-fix
+        language: system
+        types: [python]
+
+      # 2) 格式化（等价于编辑器里的「保存即格式化」）
+      - id: ruff-format
+        name: ruff format
+        entry: uv run ruff format
+        language: system
+        types: [python]
+
+      # 3) 类型检查。**不随 git commit 自动跑**，理由见文件末尾。
+      # 需要时手动触发：uv run pre-commit run pyright --hook-stage manual --all-files
+      - id: pyright
+        name: pyright
+        entry: uv run pyright
+        language: system
+        pass_filenames: false
+        types: [python]
+        stages: [manual]
+
+
+# 为什么 pyright 被踢出「每次提交都跑」：
+#
+# 第一次把它挂在提交钩子里时，一次 git commit 卡了十分钟没结束，
+# 进程还在、CPU 却是 0 —— 说明它在等什么，不是在算。
+# 同样的钩子手动跑只要 1.8 秒（`pre-commit run pyright --all-files`），
+# 所以问题出在「作为 git 钩子运行」这个特定环境，而不是 pyright 本身。
+#
+# 结论不是去修它，而是遵守一条经验：
+#   **提交钩子只放「秒级」的检查。**
+# 一旦提交要等十几秒，人的第一反应就是 `git commit --no-verify`，
+# 钩子就等于没有。类型检查这种全量分析，属于 CI 的活（模块 6 会加）。
+#
+# ruff 那两个钩子只处理「本次改动的文件」，几十毫秒，放在这里是合适的。
