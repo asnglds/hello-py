@@ -1,3 +1,11 @@
+"""示例脚本：调用接口 → 解析 JSON → 写 CSV。
+
+和 orgtool 没有关系，它只是阶段 0 的第一个练手脚本，留在这里当样例。
+
+它用到了 requests，而 orgtool 本体只用标准库——
+所以这个依赖被放进了 pyproject 的 dev 组，不是工具的运行依赖。
+"""
+
 import csv
 from pathlib import Path
 

@@ -118,12 +118,16 @@ wheels = [
 name = "orgtool"
 version = "0.1.0"
 source = { editable = "." }
-dependencies = [
+
+[package.dev-dependencies]
+dev = [
     { name = "requests" },
 ]
 
 [package.metadata]
-requires-dist = [{ name = "requests", specifier = ">=2.34.2" }]
+
+[package.metadata.requires-dev]
+dev = [{ name = "requests", specifier = ">=2.34.2" }]
 
 [[package]]
 name = "requests"

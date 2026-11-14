@@ -10,6 +10,11 @@ build/
 dist/
 *.egg-info/
 
+# 工具缓存（阶段 2 会用上）
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
 # 本地运行产生的数据
 output.csv
 *.log

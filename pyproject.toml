@@ -4,12 +4,19 @@ version = "0.1.0"
 description = "按扩展名归档文件的小工具"
 readme = "README.md"
 requires-python = ">=3.14"
-dependencies = [
-    "requests>=2.34.2",
-]
+# 工具本体只用标准库。这一栏是空的，意味着 `uv tool install .`
+# 装出来的命令不带任何第三方依赖。
+dependencies = []
 
 [project.scripts]
 orgtool = "orgtool.cli:main"
+
+# 开发期才需要的东西：示例脚本的 requests、后面的 pytest / ruff / pyright。
+# 放在这里的好处是「装工具」和「改工具」的依赖彻底分开。
+[dependency-groups]
+dev = [
+    "requests>=2.34.2",
+]
 
 [build-system]
 requires = ["uv_build>=0.13.7,<0.14.0"]
