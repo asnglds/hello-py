@@ -34,6 +34,15 @@ class Move:
     dst: Path
 
 
+class RuleError(Exception):
+    """规则文件相关的问题：读不了、不是合法 JSON、内容不合规。
+
+    自定义异常类型的目的不是「显得专业」，是让调用方可以精确捕获：
+    如果这里抛 ValueError，调用方写 except ValueError 时，
+    会把自己代码里其他地方的 ValueError 一起吞掉，bug 就被掩盖了。
+    """
+
+
 class RuleSet:
     """扩展名 -> 目标目录 的映射表，从 JSON 文件加载。
 
@@ -55,15 +64,29 @@ class RuleSet:
         为什么不写在 __init__ 里：__init__ 应该只收「已经解析好的数据」。
         读文件可能失败（不存在、格式错），把它放在独立的构造入口里，
         调用方就能明确知道「这一步可能抛异常」，而不是每次造对象都提心吊胆。
+
+        所有失败都转成 RuleError，并用 from 挂上原始异常——
+        这样报错信息里有文件名和行列号，排查时不用猜是哪个文件。
         """
-        raw = json.loads(path.read_text(encoding="utf-8"))
+        try:
+            text = path.read_text(encoding="utf-8")
+        except OSError as exc:
+            raise RuleError(f"读不了规则文件：{path}") from exc
+
+        try:
+            raw = json.loads(text)
+        except json.JSONDecodeError as exc:
+            raise RuleError(
+                f"规则文件不是合法 JSON：{path}（第 {exc.lineno} 行第 {exc.colno} 列：{exc.msg}）"
+            ) from exc
+
         if not isinstance(raw, dict):
-            raise ValueError(f"规则文件应该是一个 JSON 对象，实际是 {type(raw).__name__}：{path}")
+            raise RuleError(f"规则文件应该是一个 JSON 对象，实际是 {type(raw).__name__}：{path}")
         for ext, folder in raw.items():
             if not ext.startswith("."):
-                raise ValueError(f"扩展名必须以点开头：{ext!r}（在 {path}）")
+                raise RuleError(f"扩展名必须以点开头：{ext!r}（在 {path}）")
             if not isinstance(folder, str):
-                raise ValueError(f"目录名必须是字符串：{ext} -> {folder!r}")
+                raise RuleError(f"目录名必须是字符串：{ext} -> {folder!r}")
         return cls(raw)
 
     @property
@@ -207,9 +230,11 @@ def main() -> None:
 
     try:
         rules = RuleSet.from_json(rules_path)
-    except (OSError, ValueError) as exc:
-        # json.JSONDecodeError 是 ValueError 的子类，所以格式错也在这里被接住
-        print(f"规则文件读不了：{exc}")
+    except RuleError as exc:
+        # 异常消息本身已经带了「什么错 + 哪个文件」，直接打印，不再加前缀。
+        # 只捕获自定义类型，不写 except (OSError, ValueError)——
+        # 那样会把别的环节的错也接住，真正的 bug 会被伪装成「规则文件读不了」。
+        print(exc)
         return
 
     # plan() 现在返回生成器，不能再 len() 或者先判断非空——那样会把它抽干。
