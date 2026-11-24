@@ -1,5 +1,7 @@
 # orgtool
 
+[![CI](https://github.com/asnglds/hello-py/actions/workflows/ci.yml/badge.svg)](https://github.com/asnglds/hello-py/actions/workflows/ci.yml)
+
 按扩展名把文件归档到子目录的命令行工具。
 
 几条刻意的设计：
@@ -16,9 +18,15 @@
 # 在项目目录里，装进虚拟环境（开发用）
 uv sync
 
-# 或者装成全局命令（日常用）
+# 或者装成全局命令（日常用，装完直接敲 orgtool）
 uv tool install .
 ```
+
+装成全局命令后，可执行文件在 `~/.local/bin`。
+这个目录不在 PATH 里会提示警告，跑一次 `uv tool update-shell` 补上（之后要重开终端）。
+
+⚠️ `uv tool install` 装的是**当前代码的快照**，之后改了源码要重新
+`uv tool install . --force` 才会生效——它不是把目录链接过去。
 
 ## 用法
 
@@ -130,6 +138,29 @@ learn/             学习阶段留下的演示代码
 
 依赖方向是单向的：`cli → planner → rules`，`planner` 和 `rules` 都只依赖 `models`。
 没有一个箭头往回指，所以每一层都能单独导入、单独测试。
+
+## 持续集成
+
+每次 push 到 `main` 或开 PR，GitHub Actions 在 **ubuntu 和 windows 两个平台**上各跑一遍：
+
+```
+uv sync --frozen        # 严格按 uv.lock 装依赖
+uv run ruff check .     # lint + import 排序
+uv run ruff format --check .
+uv run pyright          # 类型检查（standard 档）
+uv run pytest -q        # 23 个用例
+```
+
+几个刻意的选择：
+
+- **`--frozen`**：锁文件和 `pyproject.toml` 不一致时立刻失败，而不是静默重新解析。
+  否则 CI 里的依赖版本可能和本地不同，而那种问题最难查。
+- **两个平台**：项目在 Windows 上开发，但代码不该依赖平台。
+  有一条测试专门记录 Windows 大小写不敏感的差异，在非 Windows 上会 skip。
+- **`fail-fast: false`**：两个平台都跑完再报结论，跨平台问题需要两边结果对照才判断得出来。
+
+类型检查放在 CI 而不在提交钩子里：提交钩子只放**秒级**检查。
+一旦提交要等十几秒，人的第一反应就是 `git commit --no-verify`，钩子等于没有。
 
 ## 开发
 
