@@ -1,19 +1,39 @@
 {
+  // 编辑器里的类型检查档位。故意比 CLI 的 standard 松一档：
+  // 这里要的是「边写边有反馈」，报错太多会淹没真正的问题。
+  // 严格的闸门交给 `uv run pyright` 和 pre-commit，那里才是不通过就不许提交。
   "python.analysis.typeCheckingMode": "basic",
+
+  // 让 Ruff 用 .venv 里的那份，而不是扩展自带的一份。
+  // 不加这行，会出现「编辑器说 OK、uv run ruff 报错」的版本漂移——
+  // 因为 uv.lock 锁的 ruff 版本和扩展捆绑的版本本来就不是同一个。
+  "ruff.importStrategy": "fromEnvironment",
+
   "[python]": {
     "editor.defaultFormatter": "charliermarsh.ruff",
     "editor.formatOnSave": true,
+    // 保存时顺手修：自动修复能修的 lint（--fix），再排 import。
+    // 这两个动作和 pre-commit 里的 ruff-check / ruff-format 是同一套规则，
+    // 所以提交时钩子通常无事可做——编辑阶段就已经改好了。
     "editor.codeActionsOnSave": {
-      "source.organizeImports": "explicit"
-    }
+      "source.fixAll.ruff": "explicit",
+      "source.organizeImports.ruff": "explicit"
+    },
+    // 和 pyproject.toml 里 ruff 的 line-length = 100 对齐，
+    // 在编辑器里就能看到那条竖线，不用等保存后才发现被折行。
+    "editor.rulers": [100]
   },
+
+  // 下面三行是「跨平台一致性」：
+  // 仓库里一律 LF、UTF-8、文件末尾留一个换行、不留行尾空格。
+  // 和 .gitattributes 的 `* text=auto eol=lf` 是同一条约定。
   "files.encoding": "utf8",
   "files.eol": "\n",
   "files.insertFinalNewline": true,
   "files.trimTrailingWhitespace": true,
-  "python.testing.pytestArgs": [
-    "tests"
-  ],
+
+  // Testing 面板：认 pytest，不认 unittest，用例目录是 tests/
+  "python.testing.pytestEnabled": true,
   "python.testing.unittestEnabled": false,
-  "python.testing.pytestEnabled": true
+  "python.testing.pytestArgs": ["tests"]
 }

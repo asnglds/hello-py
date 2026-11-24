@@ -1,15 +1,16 @@
 """命令行入口：解析参数、执行、汇报。
 
-这一层负责所有「和外界打交道」的事：读命令行、打印、搬文件。
+这一层负责所有「和外界打交道」的事：读命令行、写日志、搬文件。
 上面三层（models / rules / planner）都不打印任何东西，
-所以它们能被测试和复用；打印只发生在这里。
+所以它们能被测试和复用；输出只发生在这里。
 
-这也是为什么 main() 里 print 那么多看起来不优雅——
-它本来就该是「脏」的那一层。
+模块 4 之前这里全是 print。换成 logging 的收益不是「能显示」，
+而是能分级、能关掉、能同时写文件、能带上时间戳——print 吐出去就没了。
 """
 
 import argparse
 import functools
+import logging
 import shutil
 import time
 from collections.abc import Callable
@@ -18,6 +19,34 @@ from pathlib import Path
 from .models import Move  # noqa: F401  （导出给外部用得上，见 __init__）
 from .planner import plan
 from .rules import RuleError, RuleSet
+
+# 每个模块一个 logger，名字就是模块的导入路径 orgtool.cli。
+# 用 __name__ 而不是硬写字符串：文件被移动或改名时它会自动跟着变。
+# 它自己不带 handler——记录会向上冒泡到 setup_logging() 配好的 "orgtool" 父 logger。
+logger = logging.getLogger(__name__)
+
+
+def setup_logging() -> None:
+    """配置整个包的日志出口。只在 main() 里调用一次。
+
+    为什么在 cli.py 里配：它是唯一知道「用户正在终端里跑」的那一层。
+    planner / rules / models 只往 logger 里丢记录，不该决定记录去哪——
+    否则这个包被别人 import 时，会擅自改掉人家程序的日志配置。
+    """
+    # 拿到 "orgtool" 这个父 logger，而不是 logging.getLogger() 拿到的 root logger。
+    # 好处：只影响 orgtool.* 的日志，不会把 requests 之类的第三方日志一起改掉。
+    orgtool_logger = logging.getLogger("orgtool")
+    orgtool_logger.setLevel(logging.INFO)
+
+    # StreamHandler 默认写 stderr。这跟 print 到 stdout 有个真实差别：
+    # 以后 `orgtool ... > result.txt` 时，日志不会混进结果文件里。
+    handler = logging.StreamHandler()
+    # 只打消息本身，不加时间戳和级别——这一关的目标就是「肉眼看不出变化」。
+    # 第三关做 --log-file 时，文件那边才换成带时间的详细格式。
+    handler.setFormatter(logging.Formatter("%(message)s"))
+
+    orgtool_logger.handlers.clear()  # 防止重复调用时装两遍 handler，输出翻倍
+    orgtool_logger.addHandler(handler)
 
 
 def parse_args() -> argparse.Namespace:
@@ -76,12 +105,14 @@ def execute(src: Path, dst: Path) -> None:
 
 
 def main() -> None:
+    setup_logging()  # 必须先于任何日志调用，否则最早的几条会被丢弃
+
     args = parse_args()
     folder = Path(args.folder)
 
     # 先确认目录存在，否则后面 iterdir() 会抛出难懂的异常
     if not folder.is_dir():
-        print(f"目录不存在：{folder}")
+        logger.error("目录不存在：%s", folder)
         return
 
     # --rules 不给就用包内自带的 rules.json。
@@ -90,16 +121,16 @@ def main() -> None:
     # 所以规则文件也跟着搬进了包里——「代码在哪，它自带的资源就在哪」。
     rules_path = Path(args.rules) if args.rules else Path(__file__).with_name("rules.json")
     if not rules_path.is_file():
-        print(f"找不到规则文件：{rules_path}")
+        logger.error("找不到规则文件：%s", rules_path)
         return
 
     try:
         rules = RuleSet.from_json(rules_path)
     except RuleError as exc:
-        # 异常消息本身已经带了「什么错 + 哪个文件」，直接打印，不再加前缀。
+        # 异常消息本身已经带了「什么错 + 哪个文件」，直接输出，不再加前缀。
         # 只捕获自定义类型，不写 except (OSError, ValueError)——
         # 那样会把别的环节的错也接住，真正的 bug 会被伪装成「规则文件读不了」。
-        print(exc)
+        logger.error("%s", exc)
         return
 
     # plan() 返回生成器，不能再 len() 或者先判断非空——那样会把它抽干。
@@ -110,9 +141,12 @@ def main() -> None:
 
     for move in plan(folder, rules):
         total += 1
-        # 试运行：只打印，continue 直接跳到下一个文件
+        # 试运行：只输出，continue 直接跳到下一个文件
         if args.dry_run:
-            print(f"[试运行] {move.src.name:<20} -> {move.dst.relative_to(folder)}")
+            # 宽度用 %-20s 而不是 f-string 的 <20：
+            # logging 内部就是 msg % args，格式化语法完全通用。
+            # 这样既保住了列对齐，又没把字符串提前拼好（惰性格式化的意义）。
+            logger.info("[试运行] %-20s -> %s", move.src.name, move.dst.relative_to(folder))
             continue
 
         # 只捕获 OSError：文件被占用、没权限、目标不可写都属于它。
@@ -122,23 +156,23 @@ def main() -> None:
             execute(move.src, move.dst)
         except OSError as exc:
             failed.append((move.src.name, str(exc)))
-            print(f"[失败]   {move.src.name:<20} {exc}")
+            logger.error("[失败]   %-20s %s", move.src.name, exc)
             continue  # 这一个失败不影响后面的文件
 
         ok += 1
-        print(f"{move.src.name:<20} -> {move.dst.relative_to(folder)}")
+        logger.info("%-20s -> %s", move.src.name, move.dst.relative_to(folder))
 
     if total == 0:
-        print("没有需要整理的文件。")
+        logger.info("没有需要整理的文件。")
         return
 
     # 最后统一汇报，而不是散落在各处
-    print()
+    logger.info("")
     if args.dry_run:
-        print(f"试运行：共 {total} 个文件待整理，未做任何改动。")
+        logger.info("试运行：共 %s 个文件待整理，未做任何改动。", total)
     elif failed:
-        print(f"完成：成功 {ok} 个，失败 {len(failed)} 个")
+        logger.info("完成：成功 %s 个，失败 %s 个", ok, len(failed))
         for name, reason in failed:
-            print(f"  - {name}：{reason}")
+            logger.info("  - %s：%s", name, reason)
     else:
-        print(f"完成：成功 {ok} 个，全部处理完毕。")
+        logger.info("完成：成功 %s 个，全部处理完毕。", ok)
