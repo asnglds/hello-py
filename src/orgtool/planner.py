@@ -8,12 +8,18 @@
 但不依赖 cli。所以想测规划逻辑，不需要装命令行、不需要造参数。
 """
 
+import logging
 import os
 from collections.abc import Iterator
 from pathlib import Path
 
 from .models import Move
 from .rules import RuleSet
+
+# 这一层的日志全是 DEBUG：它记的是「每个文件为什么这么走」的过程。
+# 正常运行时这些一行都不会显示，只有加了 -v 才看得见——
+# 因为「决策过程」属于排查问题时才需要的信息，日常不需要刷屏。
+logger = logging.getLogger(__name__)
 
 
 def pick_destination(folder: Path, target_dir: str, name: str, taken: set[str]) -> Path:
@@ -59,8 +65,28 @@ def plan(folder: Path, rules: RuleSet) -> Iterator[Move]:
     # 如果偷懒写成生成器，iterdir() 就会「边遍历边被移动影响」——
     # 调用方在拿到第一个 Move 后就开始搬文件、创建 images/ 这类子目录，
     # 而 iterdir() 还没扫完。先快照一份，后面怎么搬都不影响这一轮遍历。
-    files = [p for p in folder.iterdir() if p.is_file() and not p.name.startswith(".")]
+    #
+    # 原来的写法是一个列表推导式，三件事挤在一行里。
+    # 现在拆成显式循环，为的是能在每个分支上记一条日志——
+    # 日志要能回答「那个文件到底为什么没被搬」，笼统的"跳过了一些"等于没写。
+    files: list[Path] = []
+    for item in folder.iterdir():
+        if item.name.startswith("."):
+            logger.debug("跳过（隐藏文件）：%s", item.name)
+            continue
+        if not item.is_file():
+            logger.debug("跳过（不是普通文件）：%s", item.name)
+            continue
+        files.append(item)
 
     for item in files:
-        dst = pick_destination(folder, rules.folder_for(item), item.name, taken)
+        target_dir = rules.folder_for(item)
+        dst = pick_destination(folder, target_dir, item.name, taken)
+
+        # 改名这件事必须留痕：用户看到 images/ 里有 a_1.jpg，
+        # 想不起来为什么不是 a.jpg，日志里这一条就是答案。
+        if dst.name != item.name:
+            logger.debug("%s 与目标位置已有文件重名，改名为 %s", item.name, dst.name)
+
+        logger.debug("%s -> %s（规则命中：%s/）", item.name, dst, target_dir)
         yield Move(item, dst)

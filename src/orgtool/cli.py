@@ -26,7 +26,7 @@ from .rules import RuleError, RuleSet
 logger = logging.getLogger(__name__)
 
 
-def setup_logging() -> None:
+def setup_logging(*, verbose: bool = False) -> None:
     """配置整个包的日志出口。只在 main() 里调用一次。
 
     为什么在 cli.py 里配：它是唯一知道「用户正在终端里跑」的那一层。
@@ -36,7 +36,10 @@ def setup_logging() -> None:
     # 拿到 "orgtool" 这个父 logger，而不是 logging.getLogger() 拿到的 root logger。
     # 好处：只影响 orgtool.* 的日志，不会把 requests 之类的第三方日志一起改掉。
     orgtool_logger = logging.getLogger("orgtool")
-    orgtool_logger.setLevel(logging.INFO)
+    # 级别是「入口」决定的，不是各模块自己决定的。
+    # planner 里那些 DEBUG 一句都不会删，只是默认被这一层过滤掉——
+    # 这就是分级的价值：记录成本在写的时候付一次，要不要看由运行时说了算。
+    orgtool_logger.setLevel(logging.DEBUG if verbose else logging.INFO)
 
     # StreamHandler 默认写 stderr。这跟 print 到 stdout 有个真实差别：
     # 以后 `orgtool ... > result.txt` 时，日志不会混进结果文件里。
@@ -59,6 +62,12 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(prog="orgtool", description="按扩展名归档文件")
     parser.add_argument("folder", help="要整理的目录（必填）")
     parser.add_argument("--dry-run", action="store_true", help="只打印计划，不移动文件")
+    parser.add_argument(
+        "-v",
+        "--verbose",
+        action="store_true",
+        help="输出每个文件的决策过程（DEBUG 级别）",
+    )
     parser.add_argument(
         "--rules",
         help="规则文件路径（默认使用包内自带的 rules.json）",
@@ -105,9 +114,11 @@ def execute(src: Path, dst: Path) -> None:
 
 
 def main() -> None:
-    setup_logging()  # 必须先于任何日志调用，否则最早的几条会被丢弃
-
+    # 顺序有讲究：先解析参数，才知道要不要 DEBUG；
+    # 但 parse_args 本身不写日志，所以把它放前面是安全的。
     args = parse_args()
+    setup_logging(verbose=args.verbose)  # 必须先于任何日志调用，否则最早的几条会被丢弃
+
     folder = Path(args.folder)
 
     # 先确认目录存在，否则后面 iterdir() 会抛出难懂的异常
