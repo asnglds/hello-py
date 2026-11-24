@@ -19,6 +19,7 @@ from collections.abc import Callable
 from concurrent.futures import Future, ThreadPoolExecutor, as_completed
 from pathlib import Path
 
+from . import __version__
 from .models import Move
 from .planner import plan
 from .rules import RuleError, RuleSet
@@ -93,6 +94,9 @@ def parse_args() -> argparse.Namespace:
     让参数必填，就少了一层"意外的默认行为"。
     """
     parser = argparse.ArgumentParser(prog="orgtool", description="按扩展名归档文件")
+    # action="version" 是 argparse 自带的：打印后直接退出，不需要我们自己写分支。
+    # %(prog)s 会被替换成 prog 的名字，所以改程序名时这里不用跟着改。
+    parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
     parser.add_argument("folder", help="要整理的目录（必填）")
     parser.add_argument("--dry-run", action="store_true", help="只打印计划，不移动文件")
 

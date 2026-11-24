@@ -1,0 +1,53 @@
+# 提交到 main 或开 PR 时自动跑检查。
+#
+# 为什么要有这个：前面几关的 ruff / pyright / pytest 全靠"记得执行"，
+# 迟早漏一次。CI 的价值就是把"记得"变成"自动"——
+# 而且它必须建立在已经有这三样检查之上，先有检查，才有能自动化的检查。
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  quality:
+    name: ${{ matrix.os }} / Python ${{ matrix.python }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      # fail-fast: false 让两个平台都跑完再报结论。
+      # 否则 ubuntu 先挂了，windows 的结果就永远看不到——
+      # 而跨平台问题恰恰需要两边结果对照才能判断。
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        python: ["3.14"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # setup-uv 一步到位：装 uv、按需拉指定的 Python、并开启依赖缓存。
+      # 不用 actions/setup-python 是因为我们用 uv 管理解释器和依赖，
+      # 两套工具同时管 Python 只会打架。
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: ${{ matrix.python }}
+          enable-cache: true
+
+      # --frozen 的意思：严格按 uv.lock 装，一个字都不许重新解析。
+      # 不加它，锁文件和 pyproject 不一致时 uv 会静默重新解析，
+      # CI 里的依赖版本就可能和本地不同——那种问题最难查。
+      - name: 安装依赖
+        run: uv sync --frozen
+
+      - name: lint
+        run: uv run ruff check .
+
+      - name: 格式检查
+        run: uv run ruff format --check .
+
+      - name: 类型检查
+        run: uv run pyright
+
+      - name: 测试
+        run: uv run pytest -q

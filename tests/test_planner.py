@@ -82,6 +82,10 @@ def test_existing_target_gets_suffix(tmp_path: Path) -> None:
     assert (tmp_path / "images" / "a.jpg").read_text(encoding="utf-8") == "old"
 
 
+@pytest.mark.skipif(
+    os.name != "nt",
+    reason="只在大小写不敏感的文件系统上成立；Linux 上两个文件可以并存",
+)
 def test_windows_filesystem_cannot_hold_case_only_twins(tmp_path: Path) -> None:
     """这条测试记录的是一个平台事实，不是我们的代码行为。
 
@@ -101,10 +105,15 @@ def test_windows_filesystem_cannot_hold_case_only_twins(tmp_path: Path) -> None:
 def test_collision_inside_one_plan_is_detected(tmp_path: Path) -> None:
     """「计划内部撞车」：磁盘上什么都没有，但两个目标算出来是同一个路径。
 
-    因为上面那条的平台限制，这里不能靠真实文件复现，
-    改为直接把「已被占用」的路径塞进 taken，验证 pick_destination 的机制本身。
+    这里不靠真实文件复现（受上一条的平台限制影响），
+    而是直接把「已被占用」的路径塞进 taken，验证 pick_destination 的机制本身。
+
+    注意 taken 里用的是 **a.JPG**、跟目标同名同大小写：
+    如果写成 a.jpg，这个用例就只在 Windows 上成立——
+    Linux 区分大小写，a.JPG 和 a.jpg 不算撞车，断言会挂。
+    测试也要能跨平台跑，CI 的两个平台才不会一个绿一个红。
     """
-    taken = {os.path.normcase(tmp_path / "images" / "a.jpg")}
+    taken = {os.path.normcase(tmp_path / "images" / "a.JPG")}
 
     dst = pick_destination(tmp_path, "images", "a.JPG", taken)
 
