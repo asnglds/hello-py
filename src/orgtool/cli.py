@@ -213,7 +213,13 @@ def main() -> None:
             execute(move.src, move.dst)
         except OSError as exc:
             failed.append((move.src.name, str(exc)))
+            # 屏幕只留一句话：用户关心的是「哪几个没搬成」，不是调用栈。
             logger.error("[失败]   %-20s %s", move.src.name, exc)
+            # 完整 traceback 走 DEBUG：默认屏幕上不显示，但 --log-file 里一定有。
+            # exc_info=True 会把异常类型、消息、调用栈一并附在记录上。
+            # 它必须在 except 块内部调用——离开这个块，异常上下文就没了，
+            # 拿到的是 None，日志里只会打出一句 "NoneType: None"。
+            logger.debug("失败详情：%s", move.src.name, exc_info=True)
             continue  # 这一个失败不影响后面的文件
 
         ok += 1
